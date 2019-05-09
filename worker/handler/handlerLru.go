@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	// "time"
+	"math/rand"
 )
 
 // HandlerLRU manages a list of stopped Handlers with the LRU policy.
@@ -22,17 +24,20 @@ type HandlerLRU struct {
 	soft_limit int
 	soft_cond  *sync.Cond
 	size       int
+	// last_add_time time.Time
+	evict_prob float64
 }
 
 // NewHandlerLRU creates a HandlerLRU with a given soft_limit and starts the
 // evictor in a go routine.
-func NewHandlerLRU(hms *HandlerManagerSet, soft_limit int) *HandlerLRU {
+func NewHandlerLRU(hms *HandlerManagerSet, soft_limit int, evict_prob float64) *HandlerLRU {
 	lru := &HandlerLRU{
 		hmap:       make(map[*Handler]*list.Element),
 		hms:        hms,
 		hqueue:     list.New(),
 		soft_limit: soft_limit * 1024,
 		size:       0,
+		evict_prob:	evict_prob,
 	}
 	lru.soft_cond = sync.NewCond(&lru.mutex)
 	// TODO(tyler): start a configurable number of tasks
@@ -62,6 +67,7 @@ func (lru *HandlerLRU) Add(handler *Handler) {
 	handler.usage = handlerUsage(handler)
 	lru.size += handler.usage
 	lru.hmap[handler] = entry
+	// lru.last_add_time = time.Now()
 
 	if lru.size > lru.soft_limit {
 		lru.soft_cond.Signal()
@@ -98,7 +104,7 @@ func (lru *HandlerLRU) Evictor() {
 		lru.hms.mutex.Lock()
 		lru.mutex.Lock()
 
-		if lru.hqueue.Len() == 0 {
+		if lru.hqueue.Len() == 0 || rand.Float64() > lru.evict_prob {
 			lru.mutex.Unlock()
 			lru.hms.mutex.Unlock()
 			continue
@@ -124,10 +130,53 @@ func (lru *HandlerLRU) Evictor() {
 		lru.hms.mutex.Unlock()
 
 		go h.nuke()
-
 	}
 }
 
+// func (lru * HandlerLRU) evictLastHandler() {
+// 	// assumes lru.mutex has been acquired
+// 	entry := lru.hqueue.Back()
+// 	h := entry.Value.(*Handler)
+// 	lru.hqueue.Remove(entry)
+// 	delete(lru.hmap, h)
+// 	lru.size -= h.usage
+// 
+// 	// modify the Handler's HandlerManager
+// 	lru.hm.mutex.Lock()
+// 	hEle := lru.hm.hElements[h]
+// 	lru.hm.handlers.Remove(hEle)
+// 	delete(lru.hm.hElements, h)
+// 	lru.hm.mutex.Unlock()
+// 
+// 	go h.nuke()
+// }
+// 
+// func (lru *HandlerLRU) EvictorByIdleTime() {
+// 	// TODO: make the time intervals (scan time interval and max idle time) configurable
+// 	for {
+// 		time.Sleep(1 * time.Minute)
+// 		log.Printf("EVICTING HANDLER BY IDLE TIME")
+// 
+// 		lru.mutex.Lock()
+// 
+// 		if lru.hqueue.Len() <= 1 {
+// 			// if there is only one last idle handler for the lambda, while it has been idle
+// 			// for more than 5 mins, evict it
+// 			if lru.hqueue.Len() == 1 && time.Since(lru.last_add_time) > 5 * time.Minute {
+// 				lru.evictLastHandler()
+// 			}
+// 			lru.mutex.Unlock()
+// 			continue
+// 		}
+// 
+// 		// evict 1/2 least-recently used handlers
+// 		numHandlerToEvict := lru.hqueue.Len() / 2
+// 		for i := 0; i < numHandlerToEvict; i++ { 
+// 			lru.evictLastHandler()
+// 		}
+// 		lru.mutex.Unlock()
+// 	}
+// }
 // Dump prints the Handler names in the LRU list from most recent to least
 // recent.
 func (lru *HandlerLRU) Dump() {
