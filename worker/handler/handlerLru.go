@@ -104,7 +104,14 @@ func (lru *HandlerLRU) Evictor() {
 		lru.hms.mutex.Lock()
 		lru.mutex.Lock()
 
-		if lru.hqueue.Len() == 0 || rand.Float64() > lru.evict_prob {
+		if lru.hqueue.Len() == 0 {
+			lru.mutex.Unlock()
+			lru.hms.mutex.Unlock()
+			continue
+		}
+
+		if rand.Float64() > lru.evict_prob {
+			lru.hqueue.MoveToFront(lru.hqueue.Back())
 			lru.mutex.Unlock()
 			lru.hms.mutex.Unlock()
 			continue
