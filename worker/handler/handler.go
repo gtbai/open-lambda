@@ -200,8 +200,10 @@ func (hms *HandlerManagerSet) scheduleSbCreatingReqs() {
 
 		// for debug
 		// hms.lru.mutex.Lock()
-		// log.Printf("HandlerLRU size: %v used / %v limit", hms.lru.size, hms.lru.soft_limit)
+		// log.Printf("HandlerLRU size: %v used / %v soft limit", hms.lru.size, hms.lru.soft_limit)
 		// hms.lru.mutex.Unlock()
+
+		// log.Printf("MemUsage: %v used, %v hard limit\n", getMemUsage(), hms.sbHardLimit)
 
 		time.Sleep(100 * time.Millisecond) // poll every 100ms
 	}
@@ -370,11 +372,13 @@ func (h *Handler) RunStart() (ch *sb.Channel, err error) {
         hms.sbCreatingLock.Lock()
         for hms.sbHardLimit != 0 && (getMemUsage() + (hms.numSbCreating + 1) * hms.avgHandlerMemUsage > hms.sbHardLimit) {
             hms.sbCreatingLock.Unlock()
+			h.mutex.Unlock()
 			if h.sbCreatingChan == nil {
 				h.sbCreatingChan = make(chan bool, 1)
 			}
 			hms.sbCreatingQueue <- h
 			<-h.sbCreatingChan // waiting for wake-up signal
+			h.mutex.Lock()
             hms.sbCreatingLock.Lock()
 		}
 		hms.numSbCreating += 1
